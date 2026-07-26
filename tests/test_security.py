@@ -4,6 +4,7 @@ Security tests for lakehouse-stack.
 These tests verify that security safeguards are in place and working correctly.
 """
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -313,5 +314,4 @@ class TestFilePermissions:
 
         for script in scripts:
             if script.exists():
-                mode = script.stat().st_mode
-                assert mode & 0o100, f"{script.name} should be executable"
+                assert os.access(script, os.X_OK), f"{script.name} should be executable"

@@ -1,0 +1,386 @@
+terraform {
+  required_version = ">= 1.5.0"
+
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 4.0"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+locals {
+  container_app_environment_name = "${var.project_name}-${var.environment}-cae"
+  mlflow_image                   = coalesce(var.mlflow_image, "${azurerm_container_registry.lakehouse.login_server}/lakehouse/mlflow-azure:3.13.0")
+  unity_catalog_image            = coalesce(var.unity_catalog_image, "${azurerm_container_registry.lakehouse.login_server}/lakehouse/unity-catalog-azure:v0.4.1")
+}
+
+data "azurerm_client_config" "current" {}
+
+resource "azurerm_resource_group" "lakehouse" {
+  name     = var.resource_group_name
+  location = var.location
+
+  tags = {
+    environment = var.environment
+    project     = var.project_name
+  }
+}
+
+resource "azurerm_storage_account" "lakehouse" {
+  name                     = var.storage_account_name
+  resource_group_name      = azurerm_resource_group.lakehouse.name
+  location                 = azurerm_resource_group.lakehouse.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+  account_kind             = "StorageV2"
+  is_hns_enabled           = true
+
+  tags = {
+    environment = var.environment
+    project     = var.project_name
+  }
+}
+
+resource "azurerm_storage_container" "warehouse" {
+  name                  = var.storage_container_name
+  storage_account_id    = azurerm_storage_account.lakehouse.id
+  container_access_type = "private"
+}
+
+resource "azurerm_storage_container" "mlflow_artifacts" {
+  name                  = "mlflow-artifacts"
+  storage_account_id    = azurerm_storage_account.lakehouse.id
+  container_access_type = "private"
+}
+
+resource "azurerm_container_registry" "lakehouse" {
+  name                = var.acr_name
+  resource_group_name = azurerm_resource_group.lakehouse.name
+  location            = azurerm_resource_group.lakehouse.location
+  sku                 = "Standard"
+  admin_enabled       = true
+
+  tags = {
+    environment = var.environment
+    project     = var.project_name
+  }
+}
+
+resource "azurerm_key_vault" "lakehouse" {
+  name                = var.key_vault_name
+  location            = azurerm_resource_group.lakehouse.location
+  resource_group_name = azurerm_resource_group.lakehouse.name
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  sku_name            = "standard"
+
+  purge_protection_enabled   = false
+  soft_delete_retention_days = 7
+}
+
+resource "azurerm_key_vault_access_policy" "deployer" {
+  key_vault_id = azurerm_key_vault.lakehouse.id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = data.azurerm_client_config.current.object_id
+
+  secret_permissions = ["Get", "List", "Set", "Delete", "Purge"]
+}
+
+resource "azurerm_key_vault_secret" "postgres_admin_password" {
+  name         = "postgres-admin-password"
+  value        = var.postgres_admin_password
+  key_vault_id = azurerm_key_vault.lakehouse.id
+
+  depends_on = [azurerm_key_vault_access_policy.deployer]
+}
+
+resource "azurerm_key_vault_secret" "storage_account_key" {
+  name         = "storage-account-key"
+  value        = azurerm_storage_account.lakehouse.primary_access_key
+  key_vault_id = azurerm_key_vault.lakehouse.id
+
+  depends_on = [azurerm_key_vault_access_policy.deployer]
+}
+
+resource "azurerm_eventhub_namespace_authorization_rule" "lakehouse" {
+  name                = "RootManageSharedAccessKey"
+  namespace_name      = azurerm_eventhub_namespace.lakehouse.name
+  resource_group_name = azurerm_resource_group.lakehouse.name
+
+  listen = true
+  send   = true
+  manage = true
+}
+
+resource "azurerm_key_vault_secret" "eventhub_connection_string" {
+  name         = "eventhub-connection-string"
+  value        = azurerm_eventhub_namespace_authorization_rule.lakehouse.primary_connection_string
+  key_vault_id = azurerm_key_vault.lakehouse.id
+
+  depends_on = [azurerm_key_vault_access_policy.deployer]
+}
+
+resource "azurerm_postgresql_flexible_server" "lakehouse" {
+  name                          = var.postgres_server_name
+  resource_group_name           = azurerm_resource_group.lakehouse.name
+  location                      = azurerm_resource_group.lakehouse.location
+  version                       = "16"
+  public_network_access_enabled = true
+  administrator_login           = var.postgres_admin_username
+  administrator_password        = var.postgres_admin_password
+  zone                          = "1"
+  storage_mb                    = 32768
+  sku_name                      = var.postgres_sku_name
+
+  tags = {
+    environment = var.environment
+    project     = var.project_name
+  }
+}
+
+resource "azurerm_postgresql_flexible_server_firewall_rule" "azure_services" {
+  name             = "AllowAzureServices"
+  server_id        = azurerm_postgresql_flexible_server.lakehouse.id
+  start_ip_address = "0.0.0.0"
+  end_ip_address   = "255.255.255.255"
+}
+
+resource "azurerm_postgresql_flexible_server_firewall_rule" "current_client" {
+  count            = var.allowed_client_ip != "" ? 1 : 0
+  name             = "AllowCurrentClient"
+  server_id        = azurerm_postgresql_flexible_server.lakehouse.id
+  start_ip_address = var.allowed_client_ip
+  end_ip_address   = var.allowed_client_ip
+}
+
+resource "azurerm_postgresql_flexible_server_database" "lakehouse" {
+  name      = var.postgres_database_name
+  server_id = azurerm_postgresql_flexible_server.lakehouse.id
+  collation = "en_US.utf8"
+  charset   = "utf8"
+}
+
+resource "azurerm_postgresql_flexible_server_database" "mlflow" {
+  name      = "mlflow"
+  server_id = azurerm_postgresql_flexible_server.lakehouse.id
+  collation = "en_US.utf8"
+  charset   = "utf8"
+}
+
+resource "azurerm_eventhub_namespace" "lakehouse" {
+  name                = var.eventhub_namespace_name
+  location            = azurerm_resource_group.lakehouse.location
+  resource_group_name = azurerm_resource_group.lakehouse.name
+  sku                 = "Standard"
+  capacity            = 1
+
+  tags = {
+    environment = var.environment
+    project     = var.project_name
+  }
+}
+
+resource "azurerm_eventhub" "lakehouse" {
+  name              = var.eventhub_name
+  namespace_id      = azurerm_eventhub_namespace.lakehouse.id
+  partition_count   = 2
+  message_retention = 1
+}
+
+resource "azurerm_monitor_log_analytics_workspace" "lakehouse" {
+  name                = var.log_analytics_workspace_name
+  location            = azurerm_resource_group.lakehouse.location
+  resource_group_name = azurerm_resource_group.lakehouse.name
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+}
+
+resource "azurerm_container_app_environment" "lakehouse" {
+  name                       = local.container_app_environment_name
+  location                   = azurerm_resource_group.lakehouse.location
+  resource_group_name        = azurerm_resource_group.lakehouse.name
+  log_analytics_workspace_id = azurerm_monitor_log_analytics_workspace.lakehouse.id
+}
+
+resource "azurerm_container_app" "unity_catalog" {
+  name                         = "unity-catalog"
+  container_app_environment_id = azurerm_container_app_environment.lakehouse.id
+  resource_group_name          = azurerm_resource_group.lakehouse.name
+  revision_mode                = "Single"
+
+  registry {
+    server               = azurerm_container_registry.lakehouse.login_server
+    username             = azurerm_container_registry.lakehouse.admin_username
+    password_secret_name = "acr-admin-password"
+  }
+
+  secret {
+    name  = "acr-admin-password"
+    value = azurerm_container_registry.lakehouse.admin_password
+  }
+
+  secret {
+    name  = "postgres-admin-password"
+    value = var.postgres_admin_password
+  }
+
+  secret {
+    name  = "azure-sp-client-secret"
+    value = var.azure_sp_client_secret
+  }
+
+  template {
+    container {
+      name   = "unity-catalog"
+      image  = local.unity_catalog_image
+      cpu    = 0.5
+      memory = "1Gi"
+
+      env {
+        name  = "POSTGRES_HOST"
+        value = azurerm_postgresql_flexible_server.lakehouse.fqdn
+      }
+
+      env {
+        name  = "POSTGRES_PORT"
+        value = "5432"
+      }
+
+      env {
+        name  = "POSTGRES_USER"
+        value = var.postgres_admin_username
+      }
+
+      env {
+        name        = "POSTGRES_PASSWORD"
+        secret_name = "postgres-admin-password"
+      }
+
+      env {
+        name  = "POSTGRES_DB"
+        value = var.postgres_database_name
+      }
+
+      env {
+        name  = "AZURE_STORAGE_ACCOUNT_NAME"
+        value = var.storage_account_name
+      }
+
+      env {
+        name  = "AZURE_SP_CLIENT_ID"
+        value = var.azure_sp_client_id
+      }
+
+      env {
+        name        = "AZURE_SP_CLIENT_SECRET"
+        secret_name = "azure-sp-client-secret"
+      }
+
+      env {
+        name  = "AZURE_TENANT_ID"
+        value = var.azure_tenant_id
+      }
+    }
+  }
+
+  ingress {
+    external_enabled = true
+    target_port      = 8080
+
+    traffic_weight {
+      latest_revision = true
+      percentage      = 100
+    }
+  }
+}
+
+resource "azurerm_container_app" "mlflow" {
+  name                         = "mlflow"
+  container_app_environment_id = azurerm_container_app_environment.lakehouse.id
+  resource_group_name          = azurerm_resource_group.lakehouse.name
+  revision_mode                = "Single"
+
+  registry {
+    server               = azurerm_container_registry.lakehouse.login_server
+    username             = azurerm_container_registry.lakehouse.admin_username
+    password_secret_name = "acr-admin-password"
+  }
+
+  secret {
+    name  = "acr-admin-password"
+    value = azurerm_container_registry.lakehouse.admin_password
+  }
+
+  secret {
+    name  = "postgres-admin-password"
+    value = var.postgres_admin_password
+  }
+
+  secret {
+    name  = "storage-account-key"
+    value = azurerm_storage_account.lakehouse.primary_access_key
+  }
+
+  template {
+    container {
+      name   = "mlflow"
+      image  = local.mlflow_image
+      cpu    = 0.5
+      memory = "1Gi"
+
+      env {
+        name  = "POSTGRES_HOST"
+        value = azurerm_postgresql_flexible_server.lakehouse.fqdn
+      }
+
+      env {
+        name  = "POSTGRES_PORT"
+        value = "5432"
+      }
+
+      env {
+        name  = "POSTGRES_USER"
+        value = var.postgres_admin_username
+      }
+
+      env {
+        name        = "POSTGRES_PASSWORD"
+        secret_name = "postgres-admin-password"
+      }
+
+      env {
+        name  = "POSTGRES_DB"
+        value = "mlflow"
+      }
+
+      env {
+        name  = "MLFLOW_ARTIFACTS_DESTINATION"
+        value = "wasbs://mlflow-artifacts@${var.storage_account_name}.blob.core.windows.net/mlflow-artifacts"
+      }
+
+      env {
+        name  = "AZURE_STORAGE_ACCOUNT_NAME"
+        value = var.storage_account_name
+      }
+
+      env {
+        name        = "AZURE_STORAGE_ACCESS_KEY"
+        secret_name = "storage-account-key"
+      }
+    }
+  }
+
+  ingress {
+    external_enabled = true
+    target_port      = 5000
+
+    traffic_weight {
+      latest_revision = true
+      percentage      = 100
+    }
+  }
+}

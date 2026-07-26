@@ -22,12 +22,52 @@ deploy target tag=release_tag:
       mlflow-ecs)
         bash scripts/terraform/deploy-mlflow-ecs.sh "{{ tag }}"
         ;;
+      azure)
+        terraform -chdir=terraform-azure init
+        terraform -chdir=terraform-azure plan -var-file=terraform.tfvars
+        ;;
       *)
         echo "ERROR: unknown deploy target '{{ target }}'." >&2
-        echo "Known targets: spark-ecs, mlflow-ecs" >&2
+        echo "Known targets: spark-ecs, mlflow-ecs, azure" >&2
         exit 1
         ;;
     esac
+
+# Provision the Azure scaffold. Usage: `just azure-plan` or `just azure-apply`.
+azure-bootstrap:
+    bash scripts/azure/bootstrap.sh
+
+azure-plan:
+    terraform -chdir=terraform-azure init
+    terraform -chdir=terraform-azure plan -var-file=terraform.tfvars
+
+azure-apply:
+    terraform -chdir=terraform-azure init
+    terraform -chdir=terraform-azure apply -var-file=terraform.tfvars
+
+# Generate Azure profile configuration from terraform-azure outputs.
+# Usage: `just azure-generate-config` or `just azure-generate-config --apply`.
+azure-generate-config *args:
+    bash scripts/azure/generate-config.sh {{ args }}
+
+# Tear down the Azure scaffold.
+azure-destroy:
+    terraform -chdir=terraform-azure destroy -var-file=terraform.tfvars
+
+# Build and push a runtime image to Azure Container Registry.
+# Usage: `just azure-runtime-build mlflow-azure v0.1.0`
+azure-runtime-build image tag=release_tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    acr="${AZURE_ACR_LOGIN_SERVER:?AZURE_ACR_LOGIN_SERVER is not set. Run just azure-generate-config first.}"
+    dockerfile="docker/azure/{{ image }}/Dockerfile"
+    if [[ ! -f "$dockerfile" ]]; then
+        echo "No Dockerfile at $dockerfile" >&2
+        exit 1
+    fi
+    docker build -t "lakehouse/{{ image }}:{{ tag }}" -f "$dockerfile" .
+    docker tag "lakehouse/{{ image }}:{{ tag }}" "$acr/lakehouse/{{ image }}:{{ tag }}"
+    docker push "$acr/lakehouse/{{ image }}:{{ tag }}"
 
 # Build + push the Spark image to ECR. Usage: `just spark-ecs-push [tag]`.
 spark-ecs-push tag=release_tag:

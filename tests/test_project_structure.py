@@ -71,7 +71,10 @@ class TestDirectories:
         "config/mlflow",
         "schemas",
         "terraform",
+        "terraform-azure",
         "terraform-databricks",
+        "scripts/azure",
+        "docker/azure",
         ".claude/skills/lakehouse-lifecycle",
     )
 
