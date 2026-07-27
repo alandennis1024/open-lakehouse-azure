@@ -144,6 +144,7 @@ Design principle: CLAUDE.md is a map, skills are the territory, agents are worke
 |--------|------|-------|
 | Local (Docker) | this repo's compose files | Defaults documented in [`docs/deployment/local.md`](docs/deployment/local.md) |
 | AWS (self-hosted) | [`terraform/`](terraform/) | EMR + RDS + S3 + Unity Catalog (no JDBC catalog path) |
+| Azure (self-hosted) | [`terraform-azure/`](terraform-azure/) | Container Apps + ADLS Gen2 + PostgreSQL + Event Hubs + Unity Catalog OSS + MLflow |
 | Databricks (managed) | [`terraform-databricks/`](terraform-databricks/) | Use Delta + UniForm if interop with managed UC is required |
 
 ## Security
