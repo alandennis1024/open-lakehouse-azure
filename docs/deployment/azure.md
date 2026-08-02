@@ -11,15 +11,15 @@ The `terraform-azure/` module provisions the following Azure resources:
 | Resource | Purpose |
 |----------|---------|
 | Resource group | Container for all Azure resources |
-| Azure Container Registry | Hosts the MLflow and Unity Catalog runtime images |
+| Azure Container Registry | Hosts the MLflow, Unity Catalog, and Spark Connect runtime images |
 | Storage account (ADLS Gen2) | Lakehouse warehouse data and MLflow artifacts |
 | Azure Database for PostgreSQL Flexible Server | Metadata store for Unity Catalog OSS and MLflow |
 | Azure Event Hubs namespace | Kafka-compatible streaming endpoint |
 | Azure Key Vault | Secret management |
-| Azure Container Apps environment | Runtime host for Unity Catalog OSS and MLflow |
+| Azure Container Apps environment | Runtime host for Unity Catalog OSS, MLflow, and Spark Connect |
 
-The first milestone deploys **Unity Catalog OSS** and **MLflow** as Container
-Apps. Spark Connect and Airflow runtime hosting are the next slice.
+The milestone deploys **Unity Catalog OSS**, **MLflow**, and **Spark Connect** as
+Container Apps. Airflow runtime hosting is the next slice.
 
 ## Deployment profile
 
@@ -85,12 +85,13 @@ just azure-bootstrap
 
 ### 2. Build and push runtime images
 
-The Container Apps expect MLflow and Unity Catalog images in the deployed ACR.
-Build and push them before applying the runtime layer:
+The Container Apps expect MLflow, Unity Catalog, and Spark Connect images in
+the deployed ACR. Build and push them before applying the runtime layer:
 
 ```bash
 just azure-runtime-build mlflow-azure 3.13.0
 just azure-runtime-build unity-catalog-azure v0.4.1
+just azure-runtime-build spark-connect-azure v0.1.0
 ```
 
 ### 3. Plan and apply the Azure scaffold
@@ -113,6 +114,23 @@ export AZURE_TENANT_ID='...'
 export AZURE_POSTGRES_ADMIN_PASSWORD='...'
 
 just azure-generate-config
+```
+
+The Spark Connect endpoint is exposed through the Azure Container Apps HTTPS
+ingress on port 443. The generated `.env.azure` sets:
+
+```bash
+LAKEHOUSE_SPARK_MODE=connect
+LAKEHOUSE_SPARK_REMOTE=sc://<spark-connect-fqdn>:443/;use_ssl=true
+```
+
+Connect from any Python:
+
+```python
+import os
+from pyspark.sql import SparkSession
+spark = SparkSession.builder.remote(os.environ["LAKEHOUSE_SPARK_REMOTE"]).getOrCreate()
+spark.sql("SHOW CATALOGS").show()
 ```
 
 Review the generated files. To copy them to the active locations used by the
@@ -173,6 +191,8 @@ AZURE_ACR_LOGIN_SERVER=<acr>.azurecr.io
 
 UNITY_CATALOG_URI=<unity-catalog-url>
 MLFLOW_TRACKING_URI=<mlflow-url>
+LAKEHOUSE_SPARK_MODE=connect
+LAKEHOUSE_SPARK_REMOTE=sc://<spark-connect-fqdn>:443/;use_ssl=true
 
 AZURE_SP_CLIENT_ID=<client-id>
 AZURE_SP_CLIENT_SECRET=<client-secret>
@@ -184,6 +204,32 @@ Catalog URI at the Azure-hosted endpoint. The Unity Catalog `server.properties.a
 configures ADLS Gen2 access via the four service-principal keys and connects to
 the Azure PostgreSQL backend.
 
+## Security defaults
+
+- **ACR pull uses a user-assigned managed identity.** The ACR admin account is
+  disabled. Container Apps authenticate to ACR with the same identity they use
+  to read Key Vault secrets.
+- **Runtime secrets are Key Vault references.** Postgres passwords, storage
+  account keys, and the service-principal secret are never passed as plaintext
+  environment variables in the Container App definitions; they are pulled at
+  runtime from Key Vault.
+- **PostgreSQL public network access is enabled by default** (Azure services +
+  optional client IP only) so the Container Apps can reach it without a private
+  VNet. Set `postgres_public_network_access_enabled = false` only after adding
+  a private endpoint or VNet integration.
+
+## Cost defaults
+
+This scaffold is intentionally cheap for demos and PoCs:
+
+- Container Apps: **Consumption**, single replica per app.
+- PostgreSQL: **B_Standard_B1ms** burstable SKU.
+- Storage: **Standard LRS** with HNS (ADLS Gen2).
+- Event Hubs: **Standard**, 1 throughput unit.
+- ACR: **Standard** SKU.
+- Spark Connect runs on a single **1 vCPU / 2 GiB** container in `local[*]`
+  mode (no separate master/worker cost).
+
 ## Notes and caveats
 
 - The local Docker stack is unchanged. Keep `LAKEHOUSE_PROFILE` unset or set to
@@ -192,6 +238,7 @@ the Azure PostgreSQL backend.
   key auth is commented in the generated Spark config as a fallback.
 - Event Hubs uses the Kafka-compatible endpoint, so existing Kafka-style
   producer/consumer scripts work with `KAFKA_BOOTSTRAP_SERVERS`.
-- The first milestone provisions infrastructure and deploys Unity Catalog OSS
-  and MLflow on Azure Container Apps. Spark Connect and Airflow runtime hosting
-  are the next slice.
+- Spark Connect is exposed through Azure Container Apps HTTP/2 ingress. The
+  gRPC transport is plaintext inside the environment; TLS is terminated at the
+  ACA ingress. Use `sc://<fqdn>:443` from clients.
+- The next slice is Airflow runtime hosting on Azure Container Apps.

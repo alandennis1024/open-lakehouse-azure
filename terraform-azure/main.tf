@@ -17,6 +17,7 @@ locals {
   container_app_environment_name = "${var.project_name}-${var.environment}-cae"
   mlflow_image                   = coalesce(var.mlflow_image, "${azurerm_container_registry.lakehouse.login_server}/lakehouse/mlflow-azure:3.13.0")
   unity_catalog_image            = coalesce(var.unity_catalog_image, "${azurerm_container_registry.lakehouse.login_server}/lakehouse/unity-catalog-azure:v0.4.1")
+  spark_connect_image            = coalesce(var.spark_connect_image, "${azurerm_container_registry.lakehouse.login_server}/lakehouse/spark-connect-azure:v0.1.0")
 }
 
 data "azurerm_client_config" "current" {}
@@ -59,16 +60,35 @@ resource "azurerm_storage_container" "mlflow_artifacts" {
 }
 
 resource "azurerm_container_registry" "lakehouse" {
+  # Admin account is disabled. Container Apps pull with the shared
+  # user-assigned managed identity (see azurerm_user_assigned_identity.lakehouse).
   name                = var.acr_name
   resource_group_name = azurerm_resource_group.lakehouse.name
   location            = azurerm_resource_group.lakehouse.location
   sku                 = "Standard"
-  admin_enabled       = true
+  admin_enabled       = false
 
   tags = {
     environment = var.environment
     project     = var.project_name
   }
+}
+
+resource "azurerm_user_assigned_identity" "lakehouse" {
+  name                = "${var.project_name}-${var.environment}-identity"
+  location            = azurerm_resource_group.lakehouse.location
+  resource_group_name = azurerm_resource_group.lakehouse.name
+
+  tags = {
+    environment = var.environment
+    project     = var.project_name
+  }
+}
+
+resource "azurerm_role_assignment" "lakehouse_acr_pull" {
+  scope                = azurerm_container_registry.lakehouse.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_user_assigned_identity.lakehouse.principal_id
 }
 
 resource "azurerm_key_vault" "lakehouse" {
@@ -80,6 +100,14 @@ resource "azurerm_key_vault" "lakehouse" {
 
   purge_protection_enabled   = false
   soft_delete_retention_days = 7
+}
+
+resource "azurerm_key_vault_access_policy" "lakehouse_identity" {
+  key_vault_id = azurerm_key_vault.lakehouse.id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = azurerm_user_assigned_identity.lakehouse.principal_id
+
+  secret_permissions = ["Get"]
 }
 
 resource "azurerm_key_vault_access_policy" "deployer" {
@@ -124,12 +152,20 @@ resource "azurerm_key_vault_secret" "eventhub_connection_string" {
   depends_on = [azurerm_key_vault_access_policy.deployer]
 }
 
+resource "azurerm_key_vault_secret" "azure_sp_client_secret" {
+  name         = "azure-sp-client-secret"
+  value        = var.azure_sp_client_secret
+  key_vault_id = azurerm_key_vault.lakehouse.id
+
+  depends_on = [azurerm_key_vault_access_policy.deployer]
+}
+
 resource "azurerm_postgresql_flexible_server" "lakehouse" {
   name                          = var.postgres_server_name
   resource_group_name           = azurerm_resource_group.lakehouse.name
   location                      = azurerm_resource_group.lakehouse.location
   version                       = "16"
-  public_network_access_enabled = true
+  public_network_access_enabled = var.postgres_public_network_access_enabled
   administrator_login           = var.postgres_admin_username
   administrator_password        = var.postgres_admin_password
   zone                          = "1"
@@ -143,14 +179,20 @@ resource "azurerm_postgresql_flexible_server" "lakehouse" {
 }
 
 resource "azurerm_postgresql_flexible_server_firewall_rule" "azure_services" {
+  # Allow only Azure services (not the whole Internet). In Azure, the range
+  # 0.0.0.0 - 0.0.0.0 is the documented sentinel for "Azure services" access.
+  # This rule is only created when public network access is enabled.
+  count            = var.postgres_public_network_access_enabled ? 1 : 0
   name             = "AllowAzureServices"
   server_id        = azurerm_postgresql_flexible_server.lakehouse.id
   start_ip_address = "0.0.0.0"
-  end_ip_address   = "255.255.255.255"
+  end_ip_address   = "0.0.0.0"
 }
 
 resource "azurerm_postgresql_flexible_server_firewall_rule" "current_client" {
-  count            = var.allowed_client_ip != "" ? 1 : 0
+  # Optional dev-only rule for the operator's current public IP. Leave empty
+  # for deployments that reach PostgreSQL only from within Azure.
+  count            = var.postgres_public_network_access_enabled && var.allowed_client_ip != "" ? 1 : 0
   name             = "AllowCurrentClient"
   server_id        = azurerm_postgresql_flexible_server.lakehouse.id
   start_ip_address = var.allowed_client_ip
@@ -212,25 +254,26 @@ resource "azurerm_container_app" "unity_catalog" {
   resource_group_name          = azurerm_resource_group.lakehouse.name
   revision_mode                = "Single"
 
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.lakehouse.id]
+  }
+
   registry {
-    server               = azurerm_container_registry.lakehouse.login_server
-    username             = azurerm_container_registry.lakehouse.admin_username
-    password_secret_name = "acr-admin-password"
+    server   = azurerm_container_registry.lakehouse.login_server
+    identity = azurerm_user_assigned_identity.lakehouse.id
   }
 
   secret {
-    name  = "acr-admin-password"
-    value = azurerm_container_registry.lakehouse.admin_password
+    name                = "postgres-admin-password"
+    key_vault_secret_id = azurerm_key_vault_secret.postgres_admin_password.versionless_id
+    identity            = azurerm_user_assigned_identity.lakehouse.id
   }
 
   secret {
-    name  = "postgres-admin-password"
-    value = var.postgres_admin_password
-  }
-
-  secret {
-    name  = "azure-sp-client-secret"
-    value = var.azure_sp_client_secret
+    name                = "azure-sp-client-secret"
+    key_vault_secret_id = azurerm_key_vault_secret.azure_sp_client_secret.versionless_id
+    identity            = azurerm_user_assigned_identity.lakehouse.id
   }
 
   template {
@@ -296,6 +339,11 @@ resource "azurerm_container_app" "unity_catalog" {
       percentage      = 100
     }
   }
+
+  depends_on = [
+    azurerm_key_vault_access_policy.lakehouse_identity,
+    azurerm_role_assignment.lakehouse_acr_pull,
+  ]
 }
 
 resource "azurerm_container_app" "mlflow" {
@@ -304,25 +352,26 @@ resource "azurerm_container_app" "mlflow" {
   resource_group_name          = azurerm_resource_group.lakehouse.name
   revision_mode                = "Single"
 
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.lakehouse.id]
+  }
+
   registry {
-    server               = azurerm_container_registry.lakehouse.login_server
-    username             = azurerm_container_registry.lakehouse.admin_username
-    password_secret_name = "acr-admin-password"
+    server   = azurerm_container_registry.lakehouse.login_server
+    identity = azurerm_user_assigned_identity.lakehouse.id
   }
 
   secret {
-    name  = "acr-admin-password"
-    value = azurerm_container_registry.lakehouse.admin_password
+    name                = "postgres-admin-password"
+    key_vault_secret_id = azurerm_key_vault_secret.postgres_admin_password.versionless_id
+    identity            = azurerm_user_assigned_identity.lakehouse.id
   }
 
   secret {
-    name  = "postgres-admin-password"
-    value = var.postgres_admin_password
-  }
-
-  secret {
-    name  = "storage-account-key"
-    value = azurerm_storage_account.lakehouse.primary_access_key
+    name                = "storage-account-key"
+    key_vault_secret_id = azurerm_key_vault_secret.storage_account_key.versionless_id
+    identity            = azurerm_user_assigned_identity.lakehouse.id
   }
 
   template {
@@ -383,4 +432,96 @@ resource "azurerm_container_app" "mlflow" {
       percentage      = 100
     }
   }
+
+  depends_on = [
+    azurerm_key_vault_access_policy.lakehouse_identity,
+    azurerm_role_assignment.lakehouse_acr_pull,
+  ]
+}
+
+resource "azurerm_container_app" "spark_connect" {
+  name                         = "spark-connect"
+  container_app_environment_id = azurerm_container_app_environment.lakehouse.id
+  resource_group_name          = azurerm_resource_group.lakehouse.name
+  revision_mode                = "Single"
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.lakehouse.id]
+  }
+
+  registry {
+    server   = azurerm_container_registry.lakehouse.login_server
+    identity = azurerm_user_assigned_identity.lakehouse.id
+  }
+
+  secret {
+    name                = "azure-sp-client-secret"
+    key_vault_secret_id = azurerm_key_vault_secret.azure_sp_client_secret.versionless_id
+    identity            = azurerm_user_assigned_identity.lakehouse.id
+  }
+
+  template {
+    container {
+      name   = "spark-connect"
+      image  = local.spark_connect_image
+      cpu    = 1.0
+      memory = "2Gi"
+
+      env {
+        name  = "UNITY_CATALOG_URI"
+        value = "https://${azurerm_container_app.unity_catalog.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "AZURE_STORAGE_ACCOUNT_NAME"
+        value = var.storage_account_name
+      }
+
+      env {
+        name  = "AZURE_STORAGE_CONTAINER_NAME"
+        value = var.storage_container_name
+      }
+
+      env {
+        name  = "AZURE_SP_CLIENT_ID"
+        value = var.azure_sp_client_id
+      }
+
+      env {
+        name        = "AZURE_SP_CLIENT_SECRET"
+        secret_name = "azure-sp-client-secret"
+      }
+
+      env {
+        name  = "AZURE_TENANT_ID"
+        value = var.azure_tenant_id
+      }
+
+      env {
+        name  = "SPARK_CONNECT_PORT"
+        value = "15002"
+      }
+    }
+
+    min_replicas = 1
+    max_replicas = 1
+  }
+
+  ingress {
+    external_enabled = true
+    target_port      = 15002
+    transport        = "http2"
+
+    traffic_weight {
+      latest_revision = true
+      percentage      = 100
+    }
+  }
+
+  depends_on = [
+    azurerm_key_vault_access_policy.lakehouse_identity,
+    azurerm_role_assignment.lakehouse_acr_pull,
+    azurerm_container_app.unity_catalog,
+  ]
 }

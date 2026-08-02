@@ -62,9 +62,15 @@ variable "azure_tenant_id" {
 }
 
 variable "allowed_client_ip" {
-  description = "Client IP address to allow through PostgreSQL firewall"
+  description = "Optional client IP address to allow through PostgreSQL firewall. Only used when public network access is enabled."
   type        = string
   default     = ""
+}
+
+variable "postgres_public_network_access_enabled" {
+  description = "Enable public network access to PostgreSQL. Default is true for the low-cost demo scaffold; disable only after adding private networking."
+  type        = bool
+  default     = true
 }
 
 variable "postgres_server_name" {
@@ -120,6 +126,12 @@ variable "mlflow_image" {
 
 variable "unity_catalog_image" {
   description = "Container image for Unity Catalog OSS. Defaults to the ACR-hosted image."
+  type        = string
+  default     = null
+}
+
+variable "spark_connect_image" {
+  description = "Container image for Spark 4.1 Connect server. Defaults to the ACR-hosted image."
   type        = string
   default     = null
 }

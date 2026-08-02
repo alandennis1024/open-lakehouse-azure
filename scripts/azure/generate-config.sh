@@ -59,6 +59,8 @@ collect_outputs() {
     ACR_LOGIN_SERVER="$(tf_output_optional acr_login_server "${AZURE_ACR_LOGIN_SERVER:-}")"
     UNITY_CATALOG_URL="$(tf_output_optional unity_catalog_url "${AZURE_UNITY_CATALOG_URL:-}")"
     MLFLOW_URL="$(tf_output_optional mlflow_url "${AZURE_MLFLOW_URL:-}")"
+    SPARK_CONNECT_URL="$(tf_output_optional spark_connect_url "${AZURE_SPARK_CONNECT_URL:-}")"
+    SPARK_CONNECT_FQDN="$(tf_output_optional spark_connect_fqdn "${AZURE_SPARK_CONNECT_FQDN:-}")"
 
     SP_CLIENT_ID="${AZURE_SP_CLIENT_ID:-}"
     SP_CLIENT_SECRET="${AZURE_SP_CLIENT_SECRET:-}"
@@ -149,10 +151,17 @@ AZURE_KEY_VAULT_URI=${KEY_VAULT_URI}
 AZURE_ACR_LOGIN_SERVER=${ACR_LOGIN_SERVER}
 
 # -----------------------------------------------------------------------------
-# Unity Catalog / MLflow endpoints (Azure Container Apps)
+# Unity Catalog / MLflow / Spark Connect endpoints (Azure Container Apps)
 # -----------------------------------------------------------------------------
 UNITY_CATALOG_URI=${UNITY_CATALOG_URL}
 MLFLOW_TRACKING_URI=${MLFLOW_URL}
+LAKEHOUSE_SPARK_MODE=connect
+LAKEHOUSE_SPARK_REMOTE=${SPARK_CONNECT_URL}
+
+# -----------------------------------------------------------------------------
+# Spark Connect FQDN (for clients that need the host only)
+# -----------------------------------------------------------------------------
+AZURE_SPARK_CONNECT_FQDN=${SPARK_CONNECT_FQDN}
 
 # -----------------------------------------------------------------------------
 # Azure Service Principal (for ADLS / ABFS OAuth)

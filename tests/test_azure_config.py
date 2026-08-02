@@ -72,8 +72,9 @@ def test_generate_config_creates_azure_profile_files(fake_repo, tmp_path):
         "acr_login_server": "lakehouseacr.azurecr.io",
         "unity_catalog_url": "https://unity-catalog.kind-sea-1234.azurecontainerapps.io",
         "mlflow_url": "https://mlflow.kind-sea-1234.azurecontainerapps.io",
+        "spark_connect_url": "sc://spark-connect.kind-sea-1234.azurecontainerapps.io:443/;use_ssl=true",
+        "spark_connect_fqdn": "spark-connect.kind-sea-1234.azurecontainerapps.io",
     }
-
     fake_bin = _fake_terraform_script(tmp_path, outputs)
 
     env = os.environ.copy()
@@ -109,6 +110,8 @@ def test_generate_config_creates_azure_profile_files(fake_repo, tmp_path):
     assert "lakehouse0001" in env_text
     assert "lakehouse-ehns.servicebus.windows.net:9093" in env_text
     assert "AZURE_SP_CLIENT_ID=00000000-0000-0000-0000-000000000001" in env_text
+    assert "LAKEHOUSE_SPARK_MODE=connect" in env_text
+    assert "LAKEHOUSE_SPARK_REMOTE=sc://spark-connect.kind-sea-1234.azurecontainerapps.io:443/;use_ssl=true" in env_text
 
     spark_text = spark_azure.read_text()
     assert "abfs://warehouse@lakehouse0001.dfs.core.windows.net/" in spark_text

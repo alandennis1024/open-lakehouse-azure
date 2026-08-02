@@ -75,6 +75,9 @@ class TestDirectories:
         "terraform-databricks",
         "scripts/azure",
         "docker/azure",
+        "docker/azure/mlflow-azure",
+        "docker/azure/unity-catalog-azure",
+        "docker/azure/spark-connect-azure",
         ".claude/skills/lakehouse-lifecycle",
     )
 
@@ -116,6 +119,17 @@ class TestConnectFirst:
         ), "demos/local-mode-spark/README.md must back the CLI message"
         content = readme.read_text()
         assert "NOT YET IMPLEMENTED" in content, "Placeholder must flag deferred state"
+
+
+class TestAzureDocker:
+    def test_azure_runtime_dockerfiles_exist(self):
+        for image in ("mlflow-azure", "unity-catalog-azure", "spark-connect-azure"):
+            assert (
+                PROJECT_ROOT / "docker" / "azure" / image / "Dockerfile"
+            ).exists(), f"missing Dockerfile for {image}"
+            assert (
+                PROJECT_ROOT / "docker" / "azure" / image / "entrypoint.sh"
+            ).exists(), f"missing entrypoint for {image}"
 
 
 class TestAIScaffolding:
