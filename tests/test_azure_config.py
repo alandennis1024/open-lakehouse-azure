@@ -41,11 +41,12 @@ def _fake_terraform_script(tmp_path, values):
     for name, value in values.items():
         lookup.append(f'  "{name}") echo "{value}" ;;')
 
-    script = "#!/usr/bin/env bash\n" \
-             "case \"$4\" in\n" \
-             + "\n".join(lookup) + "\n" \
-             "  *) exit 1 ;;\n" \
-             "esac\n"
+    script = (
+        "#!/usr/bin/env bash\n"
+        'case "$4" in\n' + "\n".join(lookup) + "\n"
+        "  *) exit 1 ;;\n"
+        "esac\n"
+    )
 
     terraform.write_text(script)
     terraform.chmod(0o755)
@@ -111,7 +112,10 @@ def test_generate_config_creates_azure_profile_files(fake_repo, tmp_path):
     assert "lakehouse-ehns.servicebus.windows.net:9093" in env_text
     assert "AZURE_SP_CLIENT_ID=00000000-0000-0000-0000-000000000001" in env_text
     assert "LAKEHOUSE_SPARK_MODE=connect" in env_text
-    assert "LAKEHOUSE_SPARK_REMOTE=sc://spark-connect.kind-sea-1234.azurecontainerapps.io:443/;use_ssl=true" in env_text
+    assert (
+        "LAKEHOUSE_SPARK_REMOTE=sc://spark-connect.kind-sea-1234.azurecontainerapps.io:443/;use_ssl=true"
+        in env_text
+    )
 
     spark_text = spark_azure.read_text()
     assert "abfs://warehouse@lakehouse0001.dfs.core.windows.net/" in spark_text
@@ -139,4 +143,6 @@ def test_generate_config_creates_azure_profile_files(fake_repo, tmp_path):
     )
     for text in (env_text, spark_text, uc_text):
         for placeholder in placeholders:
-            assert placeholder not in text, f"found placeholder {placeholder!r} in generated file"
+            assert (
+                placeholder not in text
+            ), f"found placeholder {placeholder!r} in generated file"
