@@ -233,7 +233,7 @@ resource "azurerm_eventhub" "lakehouse" {
   message_retention = 1
 }
 
-resource "azurerm_monitor_log_analytics_workspace" "lakehouse" {
+resource "azurerm_log_analytics_workspace" "lakehouse" {
   name                = var.log_analytics_workspace_name
   location            = azurerm_resource_group.lakehouse.location
   resource_group_name = azurerm_resource_group.lakehouse.name
@@ -245,7 +245,7 @@ resource "azurerm_container_app_environment" "lakehouse" {
   name                       = local.container_app_environment_name
   location                   = azurerm_resource_group.lakehouse.location
   resource_group_name        = azurerm_resource_group.lakehouse.name
-  log_analytics_workspace_id = azurerm_monitor_log_analytics_workspace.lakehouse.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.lakehouse.id
 }
 
 resource "azurerm_container_app" "unity_catalog" {
