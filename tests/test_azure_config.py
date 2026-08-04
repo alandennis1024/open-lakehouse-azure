@@ -119,7 +119,9 @@ def test_generate_config_creates_azure_profile_files(fake_repo, tmp_path):
         "LAKEHOUSE_SPARK_REMOTE=sc://spark-connect.kind-sea-1234.azurecontainerapps.io:443/;use_ssl=true"
         in env_text
     )
-    assert "AIRFLOW_UI_URL=https://airflow.kind-sea-1234.azurecontainerapps.io" in env_text
+    assert (
+        "AIRFLOW_UI_URL=https://airflow.kind-sea-1234.azurecontainerapps.io" in env_text
+    )
     assert "AIRFLOW_ADMIN_USER=airflow" in env_text
     assert "AIRFLOW_ADMIN_PASSWORD=AirflowPass123!" in env_text
 
