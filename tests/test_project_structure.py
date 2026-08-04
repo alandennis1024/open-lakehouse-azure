@@ -78,6 +78,7 @@ class TestDirectories:
         "docker/azure/mlflow-azure",
         "docker/azure/unity-catalog-azure",
         "docker/azure/spark-connect-azure",
+        "docker/azure/airflow-azure",
         ".claude/skills/lakehouse-lifecycle",
     )
 
@@ -123,7 +124,12 @@ class TestConnectFirst:
 
 class TestAzureDocker:
     def test_azure_runtime_dockerfiles_exist(self):
-        for image in ("mlflow-azure", "unity-catalog-azure", "spark-connect-azure"):
+        for image in (
+            "mlflow-azure",
+            "unity-catalog-azure",
+            "spark-connect-azure",
+            "airflow-azure",
+        ):
             assert (
                 PROJECT_ROOT / "docker" / "azure" / image / "Dockerfile"
             ).exists(), f"missing Dockerfile for {image}"

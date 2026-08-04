@@ -16,10 +16,10 @@ The `terraform-azure/` module provisions the following Azure resources:
 | Azure Database for PostgreSQL Flexible Server | Metadata store for Unity Catalog OSS and MLflow |
 | Azure Event Hubs namespace | Kafka-compatible streaming endpoint |
 | Azure Key Vault | Secret management |
-| Azure Container Apps environment | Runtime host for Unity Catalog OSS, MLflow, and Spark Connect |
+| Azure Container Apps environment | Runtime host for Unity Catalog OSS, MLflow, Spark Connect, and Airflow |
 
-The milestone deploys **Unity Catalog OSS**, **MLflow**, and **Spark Connect** as
-Container Apps. Airflow runtime hosting is the next slice.
+The milestone deploys **Unity Catalog OSS**, **MLflow**, **Spark Connect**, and **Airflow** as
+Container Apps.
 
 ## Deployment profile
 
@@ -85,13 +85,14 @@ just azure-bootstrap
 
 ### 2. Build and push runtime images
 
-The Container Apps expect MLflow, Unity Catalog, and Spark Connect images in
+The Container Apps expect MLflow, Unity Catalog, Spark Connect, and Airflow images in
 the deployed ACR. Build and push them before applying the runtime layer:
 
 ```bash
 just azure-runtime-build mlflow-azure 3.13.0
 just azure-runtime-build unity-catalog-azure v0.4.1
 just azure-runtime-build spark-connect-azure v0.1.0
+just azure-runtime-build airflow-azure v0.1.0
 ```
 
 ### 3. Plan and apply the Azure scaffold
@@ -112,6 +113,7 @@ export AZURE_SP_CLIENT_ID='...'
 export AZURE_SP_CLIENT_SECRET='...'
 export AZURE_TENANT_ID='...'
 export AZURE_POSTGRES_ADMIN_PASSWORD='...'
+export AZURE_AIRFLOW_ADMIN_PASSWORD='...'
 
 just azure-generate-config
 ```
@@ -194,6 +196,10 @@ MLFLOW_TRACKING_URI=<mlflow-url>
 LAKEHOUSE_SPARK_MODE=connect
 LAKEHOUSE_SPARK_REMOTE=sc://<spark-connect-fqdn>:443/;use_ssl=true
 
+AIRFLOW_UI_URL=<airflow-url>
+AIRFLOW_ADMIN_USER=<airflow-admin-user>
+AIRFLOW_ADMIN_PASSWORD=<airflow-admin-password>
+
 AZURE_SP_CLIENT_ID=<client-id>
 AZURE_SP_CLIENT_SECRET=<client-secret>
 AZURE_TENANT_ID=<tenant-id>
@@ -223,12 +229,12 @@ the Azure PostgreSQL backend.
 This scaffold is intentionally cheap for demos and PoCs:
 
 - Container Apps: **Consumption**, single replica per app.
-- PostgreSQL: **B_Standard_B1ms** burstable SKU.
+- PostgreSQL: **B_Standard_B1ms** burstable SKU (shared across Unity Catalog, MLflow, and Airflow databases).
 - Storage: **Standard LRS** with HNS (ADLS Gen2).
 - Event Hubs: **Standard**, 1 throughput unit.
 - ACR: **Standard** SKU.
-- Spark Connect runs on a single **1 vCPU / 2 GiB** container in `local[*]`
-  mode (no separate master/worker cost).
+- Spark Connect runs on a single **1 vCPU / 2 GiB** container in `local[*]` mode.
+- Airflow runs API server, scheduler, and triggerer in a single **1 vCPU / 2 GiB** container via supervisord to keep the demo scaffold cheap.
 
 ## Notes and caveats
 
@@ -241,4 +247,10 @@ This scaffold is intentionally cheap for demos and PoCs:
 - Spark Connect is exposed through Azure Container Apps HTTP/2 ingress. The
   gRPC transport is plaintext inside the environment; TLS is terminated at the
   ACA ingress. Use `sc://<fqdn>:443` from clients.
-- The next slice is Airflow runtime hosting on Azure Container Apps.
+- Airflow is exposed on port **8085** via the Container Apps ingress. The generated
+  `.env.azure` sets `AIRFLOW_UI_URL`; log in with the username configured in
+  `airflow_admin_username` and the password supplied to `AZURE_AIRFLOW_ADMIN_PASSWORD`.
+- The Airflow Fernet key is generated on first container start and stored only in
+  memory. For a production deployment, set a stable `AIRFLOW__CORE__FERNET_KEY`
+  via a Key Vault secret reference; otherwise encrypted connection passwords will
+  be invalidated when the container restarts.

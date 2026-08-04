@@ -21,3 +21,6 @@ log_analytics_workspace_name   = "lakehouse-law"
 mlflow_image                   = null
 unity_catalog_image            = null
 spark_connect_image            = null
+airflow_image                  = null
+airflow_admin_username         = "airflow"
+airflow_admin_password         = "ChangeMeAirflow123!"

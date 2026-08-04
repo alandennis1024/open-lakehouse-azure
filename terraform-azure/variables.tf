@@ -135,3 +135,21 @@ variable "spark_connect_image" {
   type        = string
   default     = null
 }
+
+variable "airflow_image" {
+  description = "Container image for Airflow runtime. Defaults to the ACR-hosted image."
+  type        = string
+  default     = null
+}
+
+variable "airflow_admin_username" {
+  description = "Administrator username for the Airflow web UI"
+  type        = string
+  default     = "airflow"
+}
+
+variable "airflow_admin_password" {
+  description = "Administrator password for the Airflow web UI"
+  type        = string
+  sensitive   = true
+}

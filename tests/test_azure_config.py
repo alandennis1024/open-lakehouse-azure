@@ -75,6 +75,7 @@ def test_generate_config_creates_azure_profile_files(fake_repo, tmp_path):
         "mlflow_url": "https://mlflow.kind-sea-1234.azurecontainerapps.io",
         "spark_connect_url": "sc://spark-connect.kind-sea-1234.azurecontainerapps.io:443/;use_ssl=true",
         "spark_connect_fqdn": "spark-connect.kind-sea-1234.azurecontainerapps.io",
+        "airflow_url": "https://airflow.kind-sea-1234.azurecontainerapps.io",
     }
     fake_bin = _fake_terraform_script(tmp_path, outputs)
 
@@ -85,6 +86,8 @@ def test_generate_config_creates_azure_profile_files(fake_repo, tmp_path):
     env["AZURE_SP_CLIENT_ID"] = "00000000-0000-0000-0000-000000000001"
     env["AZURE_SP_CLIENT_SECRET"] = "super-secret"
     env["AZURE_TENANT_ID"] = "00000000-0000-0000-0000-000000000002"
+    env["AZURE_AIRFLOW_ADMIN_USER"] = "airflow"
+    env["AZURE_AIRFLOW_ADMIN_PASSWORD"] = "AirflowPass123!"
 
     result = subprocess.run(
         ["bash", str(repo_root / "scripts" / "azure" / "generate-config.sh")],
@@ -116,6 +119,9 @@ def test_generate_config_creates_azure_profile_files(fake_repo, tmp_path):
         "LAKEHOUSE_SPARK_REMOTE=sc://spark-connect.kind-sea-1234.azurecontainerapps.io:443/;use_ssl=true"
         in env_text
     )
+    assert "AIRFLOW_UI_URL=https://airflow.kind-sea-1234.azurecontainerapps.io" in env_text
+    assert "AIRFLOW_ADMIN_USER=airflow" in env_text
+    assert "AIRFLOW_ADMIN_PASSWORD=AirflowPass123!" in env_text
 
     spark_text = spark_azure.read_text()
     assert "abfs://warehouse@lakehouse0001.dfs.core.windows.net/" in spark_text

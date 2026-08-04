@@ -13,7 +13,7 @@ help:
     @echo "  just azure-generate-config          Generate Azure profile files"
     @echo "  just azure-generate-config --apply  Generate and copy to active locations"
     @echo "  just azure-runtime-build <image> [tag]  Build and push a runtime image to ACR"
-    @echo "    images: mlflow-azure, unity-catalog-azure, spark-connect-azure"
+    @echo "    images: mlflow-azure, unity-catalog-azure, spark-connect-azure, airflow-azure"
     @echo ""
     @echo "Local recipes:"
     @echo "  just setup                          Run ./lakehouse setup"
@@ -43,6 +43,7 @@ azure-generate-config *args:
 # Usage: just azure-runtime-build mlflow-azure 3.13.0
 #        just azure-runtime-build unity-catalog-azure v0.4.1
 #        just azure-runtime-build spark-connect-azure v0.1.0
+#        just azure-runtime-build airflow-azure v0.1.0
 azure-runtime-build image tag="latest":
     #!/usr/bin/env bash
     set -euo pipefail

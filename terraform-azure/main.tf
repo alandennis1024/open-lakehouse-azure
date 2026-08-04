@@ -18,6 +18,7 @@ locals {
   mlflow_image                   = coalesce(var.mlflow_image, "${azurerm_container_registry.lakehouse.login_server}/lakehouse/mlflow-azure:3.13.0")
   unity_catalog_image            = coalesce(var.unity_catalog_image, "${azurerm_container_registry.lakehouse.login_server}/lakehouse/unity-catalog-azure:v0.4.1")
   spark_connect_image            = coalesce(var.spark_connect_image, "${azurerm_container_registry.lakehouse.login_server}/lakehouse/spark-connect-azure:v0.1.0")
+  airflow_image                  = coalesce(var.airflow_image, "${azurerm_container_registry.lakehouse.login_server}/lakehouse/airflow-azure:v0.1.0")
 }
 
 data "azurerm_client_config" "current" {}
@@ -134,6 +135,14 @@ resource "azurerm_key_vault_secret" "storage_account_key" {
   depends_on = [azurerm_key_vault_access_policy.deployer]
 }
 
+resource "azurerm_key_vault_secret" "airflow_admin_password" {
+  name         = "airflow-admin-password"
+  value        = var.airflow_admin_password
+  key_vault_id = azurerm_key_vault.lakehouse.id
+
+  depends_on = [azurerm_key_vault_access_policy.deployer]
+}
+
 resource "azurerm_eventhub_namespace_authorization_rule" "lakehouse" {
   name                = "RootManageSharedAccessKey"
   namespace_name      = azurerm_eventhub_namespace.lakehouse.name
@@ -208,6 +217,13 @@ resource "azurerm_postgresql_flexible_server_database" "lakehouse" {
 
 resource "azurerm_postgresql_flexible_server_database" "mlflow" {
   name      = "mlflow"
+  server_id = azurerm_postgresql_flexible_server.lakehouse.id
+  collation = "en_US.utf8"
+  charset   = "utf8"
+}
+
+resource "azurerm_postgresql_flexible_server_database" "airflow" {
+  name      = "airflow"
   server_id = azurerm_postgresql_flexible_server.lakehouse.id
   collation = "en_US.utf8"
   charset   = "utf8"
@@ -523,5 +539,117 @@ resource "azurerm_container_app" "spark_connect" {
     azurerm_key_vault_access_policy.lakehouse_identity,
     azurerm_role_assignment.lakehouse_acr_pull,
     azurerm_container_app.unity_catalog,
+  ]
+}
+
+resource "azurerm_container_app" "airflow" {
+  name                         = "airflow"
+  container_app_environment_id = azurerm_container_app_environment.lakehouse.id
+  resource_group_name          = azurerm_resource_group.lakehouse.name
+  revision_mode                = "Single"
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.lakehouse.id]
+  }
+
+  registry {
+    server   = azurerm_container_registry.lakehouse.login_server
+    identity = azurerm_user_assigned_identity.lakehouse.id
+  }
+
+  secret {
+    name                = "postgres-admin-password"
+    key_vault_secret_id = azurerm_key_vault_secret.postgres_admin_password.versionless_id
+    identity            = azurerm_user_assigned_identity.lakehouse.id
+  }
+
+  secret {
+    name                = "airflow-admin-password"
+    key_vault_secret_id = azurerm_key_vault_secret.airflow_admin_password.versionless_id
+    identity            = azurerm_user_assigned_identity.lakehouse.id
+  }
+
+  template {
+    min_replicas = 1
+    max_replicas = 1
+
+    container {
+      name   = "airflow"
+      image  = local.airflow_image
+      cpu    = 1.0
+      memory = "2Gi"
+
+      env {
+        name  = "POSTGRES_HOST"
+        value = azurerm_postgresql_flexible_server.lakehouse.fqdn
+      }
+
+      env {
+        name  = "POSTGRES_PORT"
+        value = "5432"
+      }
+
+      env {
+        name  = "POSTGRES_USER"
+        value = var.postgres_admin_username
+      }
+
+      env {
+        name        = "POSTGRES_PASSWORD"
+        secret_name = "postgres-admin-password"
+      }
+
+      env {
+        name  = "POSTGRES_DB"
+        value = "airflow"
+      }
+
+      env {
+        name  = "AIRFLOW_ADMIN_USER"
+        value = var.airflow_admin_username
+      }
+
+      env {
+        name        = "AIRFLOW_ADMIN_PASSWORD"
+        secret_name = "airflow-admin-password"
+      }
+
+      env {
+        name  = "KAFKA_BOOTSTRAP_SERVERS"
+        value = "${azurerm_eventhub_namespace.lakehouse.name}.servicebus.windows.net:9093"
+      }
+
+      env {
+        name  = "SPARK_CONNECT_URL"
+        value = "sc://${azurerm_container_app.spark_connect.ingress[0].fqdn}:443/;use_ssl=true"
+      }
+
+      env {
+        name  = "UNITY_CATALOG_URL"
+        value = "https://${azurerm_container_app.unity_catalog.ingress[0].fqdn}"
+      }
+
+      env {
+        name  = "MLFLOW_TRACKING_URI"
+        value = "https://${azurerm_container_app.mlflow.ingress[0].fqdn}"
+      }
+    }
+  }
+
+  ingress {
+    external_enabled = true
+    target_port      = 8085
+
+    traffic_weight {
+      latest_revision = true
+      percentage      = 100
+    }
+  }
+
+  depends_on = [
+    azurerm_key_vault_access_policy.lakehouse_identity,
+    azurerm_role_assignment.lakehouse_acr_pull,
+    azurerm_container_app.spark_connect,
   ]
 }

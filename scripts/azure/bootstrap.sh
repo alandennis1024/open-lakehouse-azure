@@ -43,6 +43,8 @@ postgres_database_name    = "iceberg_catalog"
 eventhub_namespace_name   = "${AZURE_EVENTHUB_NAMESPACE_NAME}"
 eventhub_name             = "lakehouse-events"
 log_analytics_workspace_name = "${AZURE_LOG_ANALYTICS_WORKSPACE_NAME}"
+airflow_admin_username    = "${AZURE_AIRFLOW_ADMIN_USERNAME:-airflow}"
+airflow_admin_password    = "${AZURE_AIRFLOW_ADMIN_PASSWORD:-${AZURE_POSTGRES_ADMIN_PASSWORD}}"
 EOF
 
 echo "Created $TFVARS_FILE"

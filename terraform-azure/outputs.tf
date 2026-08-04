@@ -72,3 +72,7 @@ output "spark_connect_url" {
   value         = "sc://${azurerm_container_app.spark_connect.ingress[0].fqdn}:443/;use_ssl=true"
   description   = "Spark Connect gRPC endpoint. Port 443 is the ACA external HTTPS/HTTP2 ingress port; use_ssl=true enables TLS on the client."
 }
+
+output "airflow_url" {
+  value = "https://${azurerm_container_app.airflow.ingress[0].fqdn}"
+}
