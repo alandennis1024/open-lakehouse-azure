@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -19,6 +23,7 @@ locals {
   unity_catalog_image            = coalesce(var.unity_catalog_image, "${azurerm_container_registry.lakehouse.login_server}/lakehouse/unity-catalog-azure:v0.4.1")
   spark_connect_image            = coalesce(var.spark_connect_image, "${azurerm_container_registry.lakehouse.login_server}/lakehouse/spark-connect-azure:v0.1.0")
   airflow_image                  = coalesce(var.airflow_image, "${azurerm_container_registry.lakehouse.login_server}/lakehouse/airflow-azure:v0.1.0")
+  airflow_fernet_key             = replace(replace(random_bytes.airflow_fernet_key.base64, "+", "-"), "/", "_")
 }
 
 data "azurerm_client_config" "current" {}
@@ -138,6 +143,18 @@ resource "azurerm_key_vault_secret" "storage_account_key" {
 resource "azurerm_key_vault_secret" "airflow_admin_password" {
   name         = "airflow-admin-password"
   value        = var.airflow_admin_password
+  key_vault_id = azurerm_key_vault.lakehouse.id
+
+  depends_on = [azurerm_key_vault_access_policy.deployer]
+}
+
+resource "random_bytes" "airflow_fernet_key" {
+  length = 32
+}
+
+resource "azurerm_key_vault_secret" "airflow_fernet_key" {
+  name         = "airflow-fernet-key"
+  value        = local.airflow_fernet_key
   key_vault_id = azurerm_key_vault.lakehouse.id
 
   depends_on = [azurerm_key_vault_access_policy.deployer]
@@ -570,6 +587,12 @@ resource "azurerm_container_app" "airflow" {
     identity            = azurerm_user_assigned_identity.lakehouse.id
   }
 
+  secret {
+    name                = "airflow-fernet-key"
+    key_vault_secret_id = azurerm_key_vault_secret.airflow_fernet_key.versionless_id
+    identity            = azurerm_user_assigned_identity.lakehouse.id
+  }
+
   template {
     min_replicas = 1
     max_replicas = 1
@@ -613,6 +636,11 @@ resource "azurerm_container_app" "airflow" {
       env {
         name        = "AIRFLOW_ADMIN_PASSWORD"
         secret_name = "airflow-admin-password"
+      }
+
+      env {
+        name        = "AIRFLOW__CORE__FERNET_KEY"
+        secret_name = "airflow-fernet-key"
       }
 
       env {

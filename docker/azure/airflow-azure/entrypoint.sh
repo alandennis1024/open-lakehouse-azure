@@ -41,8 +41,10 @@ export AIRFLOW__API__PORT="8085"
 export AIRFLOW__API__AUTH_BACKENDS="airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
 export AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK="true"
 
-if [[ -z "${AIRFLOW__CORE__FERNET_KEY:-}" ]]; then
-    echo "[airflow-azure-entrypoint] generating Fernet key"
+if [[ -n "${AIRFLOW__CORE__FERNET_KEY:-}" ]]; then
+    echo "[airflow-azure-entrypoint] using injected AIRFLOW__CORE__FERNET_KEY"
+else
+    echo "[airflow-azure-entrypoint] generating Fernet key (not injected)"
     AIRFLOW__CORE__FERNET_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
     export AIRFLOW__CORE__FERNET_KEY
 fi
