@@ -71,7 +71,14 @@ class TestDirectories:
         "config/mlflow",
         "schemas",
         "terraform",
+        "terraform-azure",
         "terraform-databricks",
+        "scripts/azure",
+        "docker/azure",
+        "docker/azure/mlflow-azure",
+        "docker/azure/unity-catalog-azure",
+        "docker/azure/spark-connect-azure",
+        "docker/azure/airflow-azure",
         ".claude/skills/lakehouse-lifecycle",
     )
 
@@ -113,6 +120,43 @@ class TestConnectFirst:
         ), "demos/local-mode-spark/README.md must back the CLI message"
         content = readme.read_text()
         assert "NOT YET IMPLEMENTED" in content, "Placeholder must flag deferred state"
+
+
+class TestAzureDocker:
+    EXPECTED_IMAGES = (
+        "mlflow-azure",
+        "unity-catalog-azure",
+        "spark-connect-azure",
+        "airflow-azure",
+    )
+
+    def test_azure_runtime_dockerfiles_exist(self):
+        for image in self.EXPECTED_IMAGES:
+            assert (
+                PROJECT_ROOT / "docker" / "azure" / image / "Dockerfile"
+            ).exists(), f"missing Dockerfile for {image}"
+            assert (
+                PROJECT_ROOT / "docker" / "azure" / image / "entrypoint.sh"
+            ).exists(), f"missing entrypoint for {image}"
+
+
+class TestAzureAirflow:
+    def test_validation_dag_exists(self):
+        dag = PROJECT_ROOT / "dags" / "azure_lakehouse_validation.py"
+        assert dag.exists(), "missing Azure validation DAG"
+        content = dag.read_text()
+        assert "azure_lakehouse_validation" in content, "DAG id missing"
+        assert "check_postgres" in content, "Postgres check task missing"
+        assert "check_spark_connect" in content, "Spark Connect check task missing"
+        assert "check_unity_catalog" in content, "Unity Catalog check task missing"
+        assert "check_mlflow" in content, "MLflow check task missing"
+        assert "check_kafka_bootstrap" in content, "Kafka bootstrap check task missing"
+
+    def test_terraform_has_airflow_fernet_key_secret(self):
+        main_tf = (PROJECT_ROOT / "terraform-azure" / "main.tf").read_text()
+        assert "azurerm_key_vault_secret.airflow_fernet_key" in main_tf
+        assert "airflow-fernet-key" in main_tf
+        assert "AIRFLOW__CORE__FERNET_KEY" in main_tf
 
 
 class TestAIScaffolding:

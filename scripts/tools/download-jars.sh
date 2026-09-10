@@ -53,6 +53,9 @@ JAR_LIST=(
     "spark-token-provider-kafka-0-10_2.13-4.1.0.jar|https://repo1.maven.org/maven2/org/apache/spark/spark-token-provider-kafka-0-10_2.13/4.1.0/spark-token-provider-kafka-0-10_2.13-4.1.0.jar|50000"
     "kafka-clients-3.9.0.jar|https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.9.0/kafka-clients-3.9.0.jar|8000000"
     "commons-pool2-2.12.0.jar|https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.12.0/commons-pool2-2.12.0.jar|100000"
+    # Azure / ABFS support for the Azure deployment profile.
+    "hadoop-azure-3.4.1.jar|https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-azure/3.4.1/hadoop-azure-3.4.1.jar|9000000"
+    "hadoop-azure-datalake-3.4.1.jar|https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-azure-datalake/3.4.1/hadoop-azure-datalake-3.4.1.jar|300000"
 )
 
 # Get file size (cross-platform)

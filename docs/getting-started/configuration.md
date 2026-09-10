@@ -2,6 +2,19 @@
 
 This guide covers configuring the lakehouse stack for your environment.
 
+## Installing prerequisites
+
+To install the platform-level tools (Docker, Poetry, `just`, Terraform, Azure
+CLI, Java, psql, ShellCheck), run:
+
+```bash
+bash scripts/tools/install-prereqs.sh        # check only
+bash scripts/tools/install-prereqs.sh --auto # attempt to install missing tools
+```
+
+The script detects the OS and package manager, then prints or runs the
+appropriate install commands. Review what it plans to do before using `--auto`.
+
 ## Configuration Files
 
 | File | Purpose |
@@ -44,6 +57,40 @@ ICEBERG_WAREHOUSE=${S3_WAREHOUSE}
 | macOS/Windows Docker | `host.docker.internal` | `http://host.docker.internal:8333` |
 | Linux Docker | `172.17.0.1` or `localhost` | `http://172.17.0.1:8333` |
 | Native (no Docker) | `localhost` | `http://localhost:8333` |
+
+### Azure deployment profile (optional)
+
+The lakehouse CLI supports an explicit deployment profile via the `LAKEHOUSE_PROFILE`
+environment variable or the `--profile` flag:
+
+```bash
+# Local Docker-first stack (default)
+./lakehouse setup
+LAKEHOUSE_PROFILE=local ./lakehouse setup
+
+# Azure-backed services
+LAKEHOUSE_PROFILE=azure ./lakehouse setup
+./lakehouse --profile azure setup
+./lakehouse --profile azure preflight
+```
+
+When the Azure profile is active, the CLI also sources `.env.azure` after `.env`
+so Azure endpoints override the local defaults. Generate `.env.azure` and the
+Azure-specific Spark / Unity Catalog config files from the `terraform-azure`
+outputs:
+
+```bash
+just azure-generate-config
+```
+
+To copy them to the active config locations used by the runtime, run:
+
+```bash
+just azure-generate-config --apply
+```
+
+See [`docs/deployment/azure.md`](../deployment/azure.md) for the full Azure
+first-milestone workflow.
 
 ## Spark Configuration
 

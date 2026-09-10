@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     types: [opened, synchronize, reopened, ready_for_review, edited]
 
 concurrency:
@@ -40,15 +40,29 @@ jobs:
       - name: Black
         run: poetry run black --check scripts/ tests/ demos/
 
-      - name: ShellCheck on lakehouse CLI
+      - name: ShellCheck
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y shellcheck
           # informational only — the CLI has known SC2086 word-split warnings
           shellcheck -S warning lakehouse || true
+          shellcheck -S warning scripts/azure/*.sh scripts/tools/*.sh docker/azure/*/entrypoint.sh || true
 
       - name: Bash syntax check
-        run: bash -n lakehouse
+        run: |
+          bash -n lakehouse
+          for f in scripts/azure/*.sh scripts/tools/*.sh docker/azure/*/entrypoint.sh; do
+            bash -n "$f" && echo "✓ $f"
+          done
+
+      - name: Validate Terraform (Azure)
+        run: |
+          wget -qO - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+          sudo apt-get update -qq
+          sudo apt-get install -y terraform
+          terraform -chdir=terraform-azure init -backend=false -input=false
+          terraform -chdir=terraform-azure validate
 
       - name: Validate compose files
         run: |

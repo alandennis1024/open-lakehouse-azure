@@ -1,54 +1,80 @@
-# open-lakehouse task runner.
-#
-# Install `just`: https://github.com/casey/just (see README "Deploying to AWS").
-# List recipes:  `just` or `just --list`.
+# open-lakehouse — just recipes
+# https://github.com/casey/just
 
-# Default release tag for image builds / deploys. Prefers RELEASE_TAG, falling
-# back to the legacy SPARK_IMAGE_TAG, then a hardcoded default.
-release_tag := env_var_or_default("RELEASE_TAG", env_var_or_default("SPARK_IMAGE_TAG", "v0.1.0"))
+# Default recipe: show help
+help:
+    @echo "open-lakehouse just recipes"
+    @echo ""
+    @echo "Azure deployment recipes:"
+    @echo "  just azure-bootstrap                 Create terraform.tfvars from env vars"
+    @echo "  just azure-plan                     Plan the Azure scaffold"
+    @echo "  just azure-apply                    Apply the Azure scaffold"
+    @echo "  just azure-destroy                  Tear down the Azure scaffold"
+    @echo "  just azure-generate-config          Generate Azure profile files"
+    @echo "  just azure-generate-config --apply  Generate and copy to active locations"
+    @echo "  just azure-runtime-build <image> [tag]  Build and push a runtime image to ACR"
+    @echo "    images: mlflow-azure, unity-catalog-azure, spark-connect-azure, airflow-azure"
+    @echo ""
+    @echo "Local recipes:"
+    @echo "  just setup                          Run ./lakehouse setup"
+    @echo "  just test                           Run pytest unit tests"
 
-# Show available recipes.
-default:
-    @just --list
+# Azure bootstrap — create terraform.tfvars from environment variables
+azure-bootstrap:
+    bash scripts/azure/bootstrap.sh
 
-# Deploy a stack to AWS. Usage: `just deploy spark-ecs [tag]` or `just deploy mlflow-ecs [tag]`.
-deploy target tag=release_tag:
+# Azure plan — preview the Terraform deployment
+azure-plan:
+    bash scripts/azure/deploy.sh plan
+
+# Azure apply — deploy the Azure scaffold
+azure-apply:
+    bash scripts/azure/deploy.sh apply
+
+# Azure destroy — tear down the Azure scaffold
+azure-destroy:
+    bash scripts/azure/deploy.sh destroy
+
+# Azure generate-config — generate Azure profile files from Terraform outputs
+azure-generate-config *args:
+    bash scripts/azure/generate-config.sh {{args}}
+
+# Azure runtime build — build and push a runtime image to ACR
+# Usage: just azure-runtime-build mlflow-azure 3.13.0
+#        just azure-runtime-build unity-catalog-azure v0.4.1
+#        just azure-runtime-build spark-connect-azure v0.1.0
+#        just azure-runtime-build airflow-azure v0.1.0
+azure-runtime-build image tag="latest":
     #!/usr/bin/env bash
     set -euo pipefail
-    case "{{ target }}" in
-      spark-ecs)
-        bash scripts/terraform/deploy-spark-ecs.sh "{{ tag }}"
-        ;;
-      mlflow-ecs)
-        bash scripts/terraform/deploy-mlflow-ecs.sh "{{ tag }}"
-        ;;
-      *)
-        echo "ERROR: unknown deploy target '{{ target }}'." >&2
-        echo "Known targets: spark-ecs, mlflow-ecs" >&2
+    if [ -z "${AZURE_ACR_LOGIN_SERVER:-}" ]; then
+        echo "AZURE_ACR_LOGIN_SERVER is not set. Run: just azure-generate-config" >&2
         exit 1
-        ;;
-    esac
+    fi
+    docker build -t "${AZURE_ACR_LOGIN_SERVER}/lakehouse/{{image}}:{{tag}}" "docker/azure/{{image}}"
+    docker push "${AZURE_ACR_LOGIN_SERVER}/lakehouse/{{image}}:{{tag}}"
 
-# Build + push the Spark image to ECR. Usage: `just spark-ecs-push [tag]`.
-spark-ecs-push tag=release_tag:
-    bash scripts/terraform/spark-ecr-push.sh "{{ tag }}"
+# Local setup
+setup:
+    ./lakehouse setup
 
-# Tear down the spark-ecs deployment (ALB, NLB, services, roles, Cloud Map).
-spark-ecs-destroy:
-    terraform -chdir=terraform/spark-ecs destroy
+# Run unit tests (no Docker / integration tests)
+test:
+    pytest tests/ --ignore=tests/integration -v
 
-# Print the spark-ecs Terraform outputs (URLs, service names).
-spark-ecs-outputs:
-    terraform -chdir=terraform/spark-ecs output
+# Run security tests
+security-test:
+    pytest -m security -v
 
-# Build + push the MLflow image to ECR. Usage: `just mlflow-ecs-push [tag]`.
-mlflow-ecs-push tag=release_tag:
-    bash scripts/terraform/mlflow-ecr-push.sh "{{ tag }}"
+# Validate Terraform and shell scripts
+validate:
+    bash -n lakehouse
+    bash -n scripts/azure/*.sh
+    bash -n docker/azure/*/entrypoint.sh
+    terraform -chdir=terraform-azure validate
 
-# Tear down the mlflow-ecs deployment (ALB, service, roles, log group).
-mlflow-ecs-destroy:
-    terraform -chdir=terraform/mlflow-ecs destroy
-
-# Print the mlflow-ecs Terraform outputs (URL, service name).
-mlflow-ecs-outputs:
-    terraform -chdir=terraform/mlflow-ecs output
+# Lint and format checks
+lint:
+    ruff check scripts/ tests/ demos/
+    black --check scripts/ tests/ demos/
+    shellcheck -S warning lakehouse scripts/azure/*.sh docker/azure/*/entrypoint.sh || true

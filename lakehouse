@@ -12,6 +12,45 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
     set +a
 fi
 
+# Deployment profile (local | azure). Default to local; --profile overrides.
+LAKEHOUSE_PROFILE="${LAKEHOUSE_PROFILE:-local}"
+
+# Apply the active deployment profile. When azure is selected, source the
+# Azure overlay file if it exists and notify the user.
+apply_profile() {
+    if [ "$LAKEHOUSE_PROFILE" = "azure" ]; then
+        if [ -f "$PROJECT_ROOT/.env.azure" ]; then
+            echo -e "${BLUE}Azure deployment profile active; sourcing .env.azure${NC}"
+            set -a
+            source "$PROJECT_ROOT/.env.azure"
+            set +a
+        else
+            echo -e "${YELLOW}Azure deployment profile active, but .env.azure was not found.${NC}"
+            echo -e "  ${YELLOW}→ Generate it with: just azure-generate-config${NC}"
+        fi
+    fi
+}
+
+# Warn when Azure profile files are missing. Called by setup and preflight.
+warn_azure_profile_files() {
+    if [ "$LAKEHOUSE_PROFILE" != "azure" ]; then
+        return 0
+    fi
+
+    local missing=()
+    [ -f "$PROJECT_ROOT/.env.azure" ] || missing+=(".env.azure")
+    [ -f "$PROJECT_ROOT/config/spark/spark-defaults.conf.azure" ] || missing+=("config/spark/spark-defaults.conf.azure")
+    [ -f "$PROJECT_ROOT/config/unity-catalog/server.properties.azure" ] || missing+=("config/unity-catalog/server.properties.azure")
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo -e "${YELLOW}Azure profile files missing:${NC}"
+        for f in "${missing[@]}"; do
+            echo -e "  ${YELLOW}!${NC} $f"
+        done
+        echo -e "  ${YELLOW}→ Generate them with: just azure-generate-config${NC}"
+    fi
+}
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -114,7 +153,10 @@ check_credential_consistency() {
 
     if [ -f "$PROJECT_ROOT/.env" ]; then
         source "$PROJECT_ROOT/.env"
-        if [ -n "$S3_ACCESS_KEY" ] && [ -n "$spark_s3_key" ] && [ "$S3_ACCESS_KEY" != "$spark_s3_key" ]; then
+        if [ "$LAKEHOUSE_PROFILE" = "azure" ] && [ -f "$PROJECT_ROOT/.env.azure" ]; then
+            source "$PROJECT_ROOT/.env.azure"
+        fi
+        if [ "$LAKEHOUSE_PROFILE" != "azure" ] && [ -n "$S3_ACCESS_KEY" ] && [ -n "$spark_s3_key" ] && [ "$S3_ACCESS_KEY" != "$spark_s3_key" ]; then
             echo -e "   ${YELLOW}!${NC} S3 access key mismatch between .env and spark-defaults.conf"
             has_issues=1
         fi
@@ -333,9 +375,12 @@ parse_flags() {
             --json)          JSON_OUTPUT=true; shift ;;
             --spark-connect) SPARK_MODE="connect"; shift ;;
             --spark-local)   SPARK_MODE="local"; shift ;;
+            --profile)       LAKEHOUSE_PROFILE="$2"; shift 2 ;;
+            --profile=*)     LAKEHOUSE_PROFILE="${1#*=}"; shift ;;
             *)               ARGS+=("$1"); shift ;;
         esac
     done
+    export LAKEHOUSE_PROFILE
 }
 
 # Refuse local mode for now — placeholder for future in-process Spark
@@ -974,12 +1019,15 @@ cmd_check_config() {
     echo -e "\n${YELLOW}1. Checking .env file...${NC}"
     if [ -f "$PROJECT_ROOT/.env" ]; then
         source "$PROJECT_ROOT/.env"
+        if [ "$LAKEHOUSE_PROFILE" = "azure" ] && [ -f "$PROJECT_ROOT/.env.azure" ]; then
+            source "$PROJECT_ROOT/.env.azure"
+        fi
         local env_issues=0
 
         [ -z "$POSTGRES_USER" ] && echo -e "   ${RED}✗${NC} POSTGRES_USER not set" && env_issues=1
         [ -z "$POSTGRES_PASSWORD" ] && echo -e "   ${RED}✗${NC} POSTGRES_PASSWORD not set" && env_issues=1
-        [ -z "$S3_ACCESS_KEY" ] && echo -e "   ${RED}✗${NC} S3_ACCESS_KEY not set" && env_issues=1
-        [ -z "$S3_SECRET_KEY" ] && echo -e "   ${RED}✗${NC} S3_SECRET_KEY not set" && env_issues=1
+        [ -z "$S3_ACCESS_KEY" ] && [ "$LAKEHOUSE_PROFILE" != "azure" ] && echo -e "   ${YELLOW}!${NC} S3_ACCESS_KEY not set" && env_issues=1
+        [ -z "$S3_SECRET_KEY" ] && [ "$LAKEHOUSE_PROFILE" != "azure" ] && echo -e "   ${YELLOW}!${NC} S3_SECRET_KEY not set" && env_issues=1
         [ "$POSTGRES_USER" = "your_username" ] && echo -e "   ${YELLOW}!${NC} POSTGRES_USER has placeholder value" && env_issues=1
         [ "$S3_ACCESS_KEY" = "your_access_key_here" ] && echo -e "   ${YELLOW}!${NC} S3_ACCESS_KEY has placeholder value" && env_issues=1
 
@@ -1018,6 +1066,7 @@ cmd_check_config() {
 # Preflight command
 cmd_preflight() {
     header "PREFLIGHT CHECKS"
+    warn_azure_profile_files
     preflight_checks true true true
     local result=$?
 
@@ -1046,6 +1095,9 @@ cmd_migrate() {
 
     # Load credentials
     source "$PROJECT_ROOT/.env" 2>/dev/null || true
+    if [ "$LAKEHOUSE_PROFILE" = "azure" ] && [ -f "$PROJECT_ROOT/.env.azure" ]; then
+        source "$PROJECT_ROOT/.env.azure" 2>/dev/null || true
+    fi
     local pg_user="${POSTGRES_USER:-postgres}"
     local pg_pass="${POSTGRES_PASSWORD:-}"
     local pg_host="${POSTGRES_HOST:-localhost}"
@@ -1162,9 +1214,12 @@ cmd_setup() {
         echo -e "${GREEN}✓${NC} .env exists"
         # Validate required variables
         source "$PROJECT_ROOT/.env"
+        if [ "$LAKEHOUSE_PROFILE" = "azure" ] && [ -f "$PROJECT_ROOT/.env.azure" ]; then
+            source "$PROJECT_ROOT/.env.azure"
+        fi
         local env_ok=1
         [ -z "$POSTGRES_USER" ] && echo -e "  ${RED}✗${NC} POSTGRES_USER not set" && env_ok=0
-        [ -z "$S3_ACCESS_KEY" ] && echo -e "  ${RED}✗${NC} S3_ACCESS_KEY not set" && env_ok=0
+        [ -z "$S3_ACCESS_KEY" ] && [ "$LAKEHOUSE_PROFILE" != "azure" ] && echo -e "  ${YELLOW}!${NC} S3_ACCESS_KEY not set" && env_ok=0
         [ "$POSTGRES_USER" = "your_username" ] && echo -e "  ${YELLOW}!${NC} POSTGRES_USER still has default value" && env_ok=0
         [ "$S3_ACCESS_KEY" = "your_access_key_here" ] && echo -e "  ${YELLOW}!${NC} S3_ACCESS_KEY still has default value" && env_ok=0
         [ $env_ok -eq 1 ] && echo -e "  ${GREEN}✓${NC} Required variables set"
@@ -1186,6 +1241,9 @@ cmd_setup() {
         # Validate credential consistency
         check_credential_consistency
     fi
+
+    # Azure profile sanity check
+    warn_azure_profile_files
 
     # Step 4: Check JARs
     echo -e "\n${YELLOW}3. Checking JAR dependencies...${NC}"
@@ -1281,7 +1339,11 @@ cmd_help() {
     cat <<'EOF'
 open-lakehouse — demo platform CLI
 
-Usage: lakehouse [--spark-connect|--spark-local] [--json] <command> [args]
+Usage: lakehouse [--profile local|azure] [--spark-connect|--spark-local] [--json] <command> [args]
+
+Deployment profile:
+  --profile local     (default) Use local Docker-first services
+  --profile azure     Target Azure-backed services; sources .env.azure when present
 
 Spark transport:
   --spark-connect    (default) Use Spark Connect (sc://localhost:15002) — Connect-first architecture
@@ -1342,6 +1404,7 @@ EOF
 
 # Main
 parse_flags "$@"
+apply_profile
 export_spark_env
 
 # Re-bind positional args to the flag-stripped list so `case $1` sees the command.

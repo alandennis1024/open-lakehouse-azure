@@ -45,6 +45,27 @@ spark.hadoop.fs.s3a.secret.key            your_secret_key
 spark.hadoop.fs.s3a.path.style.access     true
 spark.hadoop.fs.s3a.impl                  org.apache.hadoop.fs.s3a.S3AFileSystem
 spark.hadoop.fs.s3a.connection.ssl.enabled false
+
+# ============================================================================
+# Azure Storage / ABFS (optional profile)
+# ============================================================================
+# Uncomment and fill in when running against Azure Storage / ADLS Gen2.
+# Requires the hadoop-azure JAR (see Required JARs below).
+#
+# Replace <storage-account> with the Azure Storage account name.
+#
+# Option A: OAuth via service principal (recommended)
+# spark.hadoop.fs.azure.account.auth.type.<storage-account>.dfs.core.windows.net OAuth
+# spark.hadoop.fs.azure.account.oauth.provider.type.<storage-account>.dfs.core.windows.net org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider
+# spark.hadoop.fs.azure.account.oauth2.client.id.<storage-account>.dfs.core.windows.net <client-id>
+# spark.hadoop.fs.azure.account.oauth2.client.secret.<storage-account>.dfs.core.windows.net <client-secret>
+# spark.hadoop.fs.azure.account.oauth2.client.endpoint.<storage-account>.dfs.core.windows.net https://login.microsoftonline.com/<tenant-id>/oauth2/token
+#
+# Option B: account key auth
+# spark.hadoop.fs.azure.account.key.<storage-account>.dfs.core.windows.net <account-key>
+#
+# Point the Iceberg warehouse at an ABFS path:
+# spark.sql.catalog.iceberg.warehouse abfs://warehouse@<storage-account>.dfs.core.windows.net/
 # SeaweedFS S3 returns HTTP 500 on bulk DeleteObjects and on the Hadoop
 # FileOutputCommitter's directory-marker cleanup. Delete one object at a time
 # and keep directory markers so recursive deletes / commits don't fail.
@@ -61,6 +82,7 @@ spark.hadoop.fs.AbstractFileSystem.s3.impl org.apache.hadoop.fs.s3a.S3A
 # ============================================================================
 # All downloaded by `./lakehouse setup` (scripts/tools/download-jars.sh).
 # Delta is 4.2.0 — required for Spark 4.1 ABI compatibility.
+# For Azure/ABFS, also add hadoop-azure-3.4.1.jar and hadoop-azure-datalake-3.4.1.jar.
 spark.jars  /opt/spark/jars-extra/iceberg-spark-runtime-4.0_2.13-1.10.0.jar,/opt/spark/jars-extra/delta-spark_2.13-4.2.0.jar,/opt/spark/jars-extra/delta-storage-4.2.0.jar,/opt/spark/jars-extra/unitycatalog-spark_2.13-0.3.0.jar,/opt/spark/jars-extra/unitycatalog-client-0.3.0.jar,/opt/spark/jars-extra/hadoop-aws-3.4.1.jar,/opt/spark/jars-extra/aws-java-sdk-bundle-1.12.780.jar,/opt/spark/jars-extra/bundle-2.24.6.jar
 
 # ============================================================================

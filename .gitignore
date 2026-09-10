@@ -99,6 +99,10 @@ mlartifacts/
 .DS_Store
 Thumbs.db
 
+# Local knowledge/MCP tooling
+.mcp.json
+.mdknowledge/
+
 # ─── Logs and tmp ───────────────────────────────────────────────────────
 *.log
 logs/
